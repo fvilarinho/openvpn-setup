@@ -997,8 +997,12 @@ function newClient() {
 		TLS_SIG="2"
 	fi
 
+	ETC_DIR="$HOME_DIR"/etc
+
+	mkdir -p "$ETC_DIR"
+
 	# Generates the custom client.ovpn
-	cp /etc/openvpn/client-template.txt "$HOME_DIR/$CLIENT.ovpn"
+	cp /etc/openvpn/client-template.txt "$ETC_DIR/$CLIENT.ovpn"
 	{
 		echo "<ca>"
 		cat "/etc/openvpn/easy-rsa/pki/ca.crt"
@@ -1052,16 +1056,17 @@ function newClient() {
         echo "route $SUBNET3_RANGE $SUBNET3_NETMASK"
       fi
     fi
-	} >> "$HOME_DIR/$CLIENT.ovpn"
+	} >> "$ETC_DIR/$CLIENT.ovpn"
 
 	echo
-	echo "The configuration file has been written to $HOME_DIR/$CLIENT.ovpn."
+	echo "The configuration file has been written to $ETC_DIR/$CLIENT.ovpn."
 	echo "Download the .ovpn file and import it in your OpenVPN client."
 
 	exit 0
 }
 
 function revokeClient() {
+  ETC_DIR="$HOME_DIR"/etc
 	NUMBEROFCLIENTS=$(tail -n +2 /etc/openvpn/easy-rsa/pki/index.txt | grep -c "^V")
 
 	if [[ $NUMBEROFCLIENTS == '0' ]]; then
@@ -1094,7 +1099,7 @@ function revokeClient() {
 	cp /etc/openvpn/easy-rsa/pki/crl.pem /etc/openvpn/crl.pem
 	chmod 644 /etc/openvpn/crl.pem
 	find /home/ -maxdepth 2 -name "$CLIENT.ovpn" -delete
-	rm -f "/root/$CLIENT.ovpn"
+	rm -f "$ETC_DIR/$CLIENT.ovpn"
 	sed -i "/^$CLIENT,.*/d" /etc/openvpn/ipp.txt
 	cp /etc/openvpn/easy-rsa/pki/index.txt{,.bk}
 
@@ -1103,6 +1108,8 @@ function revokeClient() {
 }
 
 function removeOpenVPN() {
+  ETC_DIR="$HOME_DIR"/etc
+
 	echo
 	read -rp "Do you really want to remove OpenVPN? [y/n]: " -e -i n REMOVE
 
@@ -1163,7 +1170,7 @@ function removeOpenVPN() {
 		fi
 
 		# Cleanup
-		find /home/ -maxdepth 2 -name "*.ovpn" -delete
+		find "$ETC_DIR" -maxdepth 2 -name "*.ovpn" -delete
 		find /root/ -maxdepth 1 -name "*.ovpn" -delete
 		rm -rf /etc/openvpn
 		rm -rf /usr/share/doc/openvpn*
