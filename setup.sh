@@ -155,11 +155,11 @@ function installQuestions() {
 		done
 	fi
 
-	if [[ -z $SERVER_ADDRESS_PREFIX ]]; then
+	if [[ -z $SERVER_NETWORK_ADDRESS_PREFIX ]]; then
 		echo
 
-		until [[ $SERVER_ADDRESS_PREFIX != "" ]]; do
-			read -rp "Please enter the server network address prefix, used for IP assignment to clients: " -e -i "10.8.0.0" SERVER_ADDRESS_PREFIX
+		until [[ $SERVER_NETWORK_ADDRESS_PREFIX != "" ]]; do
+			read -rp "Please enter the server network address prefix, used for IP assignment to clients: " -e -i "10.8.0.0" SERVER_NETWORK_ADDRESS_PREFIX
 		done
   fi
 
@@ -535,9 +535,10 @@ function installQuestions() {
 function installOpenVPN() {
 	if [[ $AUTO_INSTALL == "y" ]]; then
 		# Set default choices so that no questions will be asked.
+		HOME_DIR=${HOME_DIR:-/root}
 		APPROVE_INSTALL=${APPROVE_INSTALL:-y}
 		APPROVE_IP=${APPROVE_IP:-y}
-		SERVER_ADDRESS_PREFIX=${SERVER_ADDRESS_PREFIX:-10.8.0.0}
+		SERVER_NETWORK_ADDRESS_PREFIX=${SERVER_NETWORK_ADDRESS_PREFIX:-10.8.0.0}
 		PORT_CHOICE=${PORT_CHOICE:-1}
 		PROTOCOL_CHOICE=${PROTOCOL_CHOICE:-1}
 		DNS=${DNS:-1}
@@ -702,7 +703,7 @@ function installOpenVPN() {
   echo "persist-tun" >> /etc/openvpn/server.conf
   echo "keepalive 10 120" >> /etc/openvpn/server.conf
   echo "topology subnet" >> /etc/openvpn/server.conf
-  echo "server $SERVER_ADDRESS_PREFIX 255.255.255.0" >> /etc/openvpn/server.conf
+  echo "server $SERVER_NETWORK_ADDRESS_PREFIX 255.255.255.0" >> /etc/openvpn/server.conf
   echo "ifconfig-pool-persist ipp.txt" >> /etc/openvpn/server.conf
 
 	# DNS resolvers
@@ -868,7 +869,7 @@ function installOpenVPN() {
 
 	# Script to add rules
 	echo "#!/bin/sh" > /etc/iptables/add-openvpn-rules.sh
-  echo "iptables -t nat -I POSTROUTING 1 -s $SERVER_ADDRESS_PREFIX/24 -o $NIC -j MASQUERADE" >> /etc/iptables/add-openvpn-rules.sh
+  echo "iptables -t nat -I POSTROUTING 1 -s $SERVER_NETWORK_ADDRESS_PREFIX/24 -o $NIC -j MASQUERADE" >> /etc/iptables/add-openvpn-rules.sh
   echo "iptables -I INPUT 1 -i tun0 -j ACCEPT" >> /etc/iptables/add-openvpn-rules.sh
   echo "iptables -I FORWARD 1 -i $NIC -o tun0 -j ACCEPT" >> /etc/iptables/add-openvpn-rules.sh
   echo "iptables -I FORWARD 1 -i tun0 -o $NIC -j ACCEPT" >> /etc/iptables/add-openvpn-rules.sh
@@ -876,7 +877,7 @@ function installOpenVPN() {
 
 	# Script to remove rules
 	echo "#!/bin/sh" > /etc/iptables/rm-openvpn-rules.sh
-  echo "iptables -t nat -D POSTROUTING -s $SERVER_ADDRESS_PREFIX/24 -o $NIC -j MASQUERADE" >> /etc/iptables/rm-openvpn-rules.sh
+  echo "iptables -t nat -D POSTROUTING -s $SERVER_NETWORK_ADDRESS_PREFIX/24 -o $NIC -j MASQUERADE" >> /etc/iptables/rm-openvpn-rules.sh
   echo "iptables -D INPUT -i tun0 -j ACCEPT" >> /etc/iptables/rm-openvpn-rules.sh
   echo "iptables -D FORWARD -i $NIC -o tun0 -j ACCEPT" >> /etc/iptables/rm-openvpn-rules.sh
   echo "iptables -D FORWARD -i tun0 -o $NIC -j ACCEPT" >> /etc/iptables/rm-openvpn-rules.sh
@@ -989,23 +990,6 @@ function newClient() {
 		echo "Client $CLIENT added."
 	fi
 
-	# Home directory of the user, where the client configuration will be written
-	if [ -e "/home/${CLIENT}" ]; then
-		# if $1 is a user name
-		homeDir="/home/${CLIENT}"
-	elif [ "${SUDO_USER}" ]; then
-		# if not, use SUDO_USER
-		if [ "${SUDO_USER}" == "root" ]; then
-			# If running sudo as root
-			homeDir="/root"
-		else
-			homeDir="/home/${SUDO_USER}"
-		fi
-	else
-		# if not SUDO_USER, use /root
-		homeDir="/root"
-	fi
-
 	# Determine if we use tls-auth or tls-crypt
 	if grep -qs "^tls-crypt" /etc/openvpn/server.conf; then
 		TLS_SIG="1"
@@ -1014,7 +998,7 @@ function newClient() {
 	fi
 
 	# Generates the custom client.ovpn
-	cp /etc/openvpn/client-template.txt "$homeDir/$CLIENT.ovpn"
+	cp /etc/openvpn/client-template.txt "$HOME_DIR/$CLIENT.ovpn"
 	{
 		echo "<ca>"
 		cat "/etc/openvpn/easy-rsa/pki/ca.crt"
@@ -1041,10 +1025,37 @@ function newClient() {
 			  echo "</tls-auth>"
 			  ;;
 		esac
-	} >> "$homeDir/$CLIENT.ovpn"
+
+    echo "pull-filter ignore redirect-gateway"
+    echo "route-nopull"
+    echo "route $SERVER_NETWORK_ADDRESS_PREFIX 255.255.255.0"
+
+    SUBNET1_RANGE=$(route -n | grep eth1 | awk '{print $1}')
+    SUBNET1_NETMASK=$(route -n | grep eth1 | awk '{print $3}')
+
+    SUBNET2_RANGE=$(route -n | grep eth2 | awk '{print $1}')
+    SUBNET2_NETMASK=$(route -n | grep eth2 | awk '{print $3}')
+
+    SUBNET3_RANGE=$(route -n | grep eth3 | awk '{print $1}')
+    SUBNET3_NETMASK=$(route -n | grep eth3 | awk '{print $3}')
+
+    if [ -n "$SUBNET1_RANGE" ] || [ -n "$SUBNET2_RANGE" ] || [ -n "$SUBNET3_RANGE" ]; then
+      if [ -n "$SUBNET1_RANGE" ]; then
+        echo "route $SUBNET1_RANGE $SUBNET1_NETMASK"
+      fi
+
+      if [ -n "$SUBNET2_RANGE" ]; then
+        echo "route $SUBNET2_RANGE $SUBNET2_NETMASK"
+      fi
+
+      if [ -n "$SUBNET3_RANGE" ]; then
+        echo "route $SUBNET3_RANGE $SUBNET3_NETMASK"
+      fi
+    fi
+	} >> "$HOME_DIR/$CLIENT.ovpn"
 
 	echo
-	echo "The configuration file has been written to $homeDir/$CLIENT.ovpn."
+	echo "The configuration file has been written to $HOME_DIR/$CLIENT.ovpn."
 	echo "Download the .ovpn file and import it in your OpenVPN client."
 
 	exit 0
