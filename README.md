@@ -1,4 +1,4 @@
-## OpenVPN Server Styp
+## OpenVPN Server Setup
 
 ## 1. Introduction
 
