@@ -1,5 +1,4 @@
 #!/bin/bash
-# shellcheck disable=SC1091,SC2164,SC2034,SC1072,SC1073,SC1009
 # Secure OpenVPN server installer for Debian, Ubuntu, CentOS, Amazon Linux 2, Fedora, Oracle Linux 8, Arch Linux, Rocky Linux and AlmaLinux.
 function isRoot() {
 	if [ "$EUID" -ne 0 ]; then
@@ -11,6 +10,26 @@ function tunAvailable() {
 	if [ ! -e /dev/net/tun ]; then
 		return 1
 	fi
+}
+
+function cidrToNetmask {
+    local i
+    local mask=""
+    local full_octets=$(($1/8))
+    local partial_octet=$(($1%8))
+
+    for ((i=0; i<4; i+=1)); do
+        if [ $i -lt $full_octets ]; then
+            mask+=255
+        elif [ $i -eq $full_octets ]; then
+            mask+=$((256 - 2**(8-$partial_octet)))
+        else
+            mask+=0
+        fi
+        test $i -lt 3 && mask+=.
+    done
+
+    echo $mask
 }
 
 function checkOS() {
@@ -155,11 +174,19 @@ function installQuestions() {
 		done
 	fi
 
-	if [[ -z $SERVER_NETWORK_ADDRESS_PREFIX ]]; then
+	if [[ -z $SERVER_NETWORK_PREFIX ]]; then
 		echo
 
-		until [[ $SERVER_NETWORK_ADDRESS_PREFIX != "" ]]; do
-			read -rp "Please enter the server network address prefix, used for IP assignment to clients: " -e -i "10.8.0.0" SERVER_NETWORK_ADDRESS_PREFIX
+		until [[ $SERVER_NETWORK_PREFIX != "" ]]; do
+			read -rp "Please enter the server network prefix, used for IP assignment to clients: " -e -i "10.8.0.0" SERVER_NETWORK_PREFIX
+		done
+  fi
+
+	if [[ -z $SERVER_NETWORK_MASK ]]; then
+		echo
+
+		until [[ $SERVER_NETWORK_MASK != "" ]]; do
+			read -rp "Please enter the server network mask, used for IP assignment to clients: " -e -i "24" SERVER_NETWORK_MASK
 		done
   fi
 
@@ -538,7 +565,8 @@ function installOpenVPN() {
 		HOME_DIR=${HOME_DIR:-/root}
 		APPROVE_INSTALL=${APPROVE_INSTALL:-y}
 		APPROVE_IP=${APPROVE_IP:-y}
-		SERVER_NETWORK_ADDRESS_PREFIX=${SERVER_NETWORK_ADDRESS_PREFIX:-10.8.0.0}
+		SERVER_NETWORK_PREFIX=${SERVER_NETWORK_PREFIX:-10.8.0.0}
+		SERVER_NETWORK_MASK=${SERVER_NETWORK_MASK:-24}
 		PORT_CHOICE=${PORT_CHOICE:-1}
 		PROTOCOL_CHOICE=${PROTOCOL_CHOICE:-1}
 		DNS=${DNS:-1}
@@ -703,7 +731,7 @@ function installOpenVPN() {
   echo "persist-tun" >> /etc/openvpn/server.conf
   echo "keepalive 10 120" >> /etc/openvpn/server.conf
   echo "topology subnet" >> /etc/openvpn/server.conf
-  echo "server $SERVER_NETWORK_ADDRESS_PREFIX 255.255.255.0" >> /etc/openvpn/server.conf
+  echo "server $SERVER_NETWORK_PREFIX $(cidrToNetmask $SERVER_NETWORK_MASK)" >> /etc/openvpn/server.conf
   echo "ifconfig-pool-persist ipp.txt" >> /etc/openvpn/server.conf
 
 	# DNS resolvers
@@ -869,7 +897,7 @@ function installOpenVPN() {
 
 	# Script to add rules
 	echo "#!/bin/sh" > /etc/iptables/add-openvpn-rules.sh
-  echo "iptables -t nat -I POSTROUTING 1 -s $SERVER_NETWORK_ADDRESS_PREFIX/24 -o $NIC -j MASQUERADE" >> /etc/iptables/add-openvpn-rules.sh
+  echo "iptables -t nat -I POSTROUTING 1 -s $SERVER_NETWORK_PREFIX/$SERVER_NETWORK_MASK -o $NIC -j MASQUERADE" >> /etc/iptables/add-openvpn-rules.sh
   echo "iptables -I INPUT 1 -i tun0 -j ACCEPT" >> /etc/iptables/add-openvpn-rules.sh
   echo "iptables -I FORWARD 1 -i $NIC -o tun0 -j ACCEPT" >> /etc/iptables/add-openvpn-rules.sh
   echo "iptables -I FORWARD 1 -i tun0 -o $NIC -j ACCEPT" >> /etc/iptables/add-openvpn-rules.sh
@@ -877,7 +905,7 @@ function installOpenVPN() {
 
 	# Script to remove rules
 	echo "#!/bin/sh" > /etc/iptables/rm-openvpn-rules.sh
-  echo "iptables -t nat -D POSTROUTING -s $SERVER_NETWORK_ADDRESS_PREFIX/24 -o $NIC -j MASQUERADE" >> /etc/iptables/rm-openvpn-rules.sh
+  echo "iptables -t nat -D POSTROUTING -s $SERVER_NETWORK_PREFIX/$SERVER_NETWORK_MASK -o $NIC -j MASQUERADE" >> /etc/iptables/rm-openvpn-rules.sh
   echo "iptables -D INPUT -i tun0 -j ACCEPT" >> /etc/iptables/rm-openvpn-rules.sh
   echo "iptables -D FORWARD -i $NIC -o tun0 -j ACCEPT" >> /etc/iptables/rm-openvpn-rules.sh
   echo "iptables -D FORWARD -i tun0 -o $NIC -j ACCEPT" >> /etc/iptables/rm-openvpn-rules.sh
@@ -1032,7 +1060,7 @@ function newClient() {
 
     echo "pull-filter ignore redirect-gateway"
     echo "route-nopull"
-    echo "route $SERVER_NETWORK_ADDRESS_PREFIX 255.255.255.0"
+    echo "route $SERVER_NETWORK_PREFIX $(cidrToNetmask $SERVER_NETWORK_MASK)"
 
     SUBNET1_RANGE=$(route -n | grep eth1 | awk '{print $1}')
     SUBNET1_NETMASK=$(route -n | grep eth1 | awk '{print $3}')
